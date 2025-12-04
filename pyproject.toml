@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "geofffrey-telegram-bot"
+version = "0.1.0"
+description = "Geoffrey Telegram Bot"
+authors = ["Daniel Torres <torresestradadaniel@gmail.com>"]
+readme = "README.md"
+packages = [{include = "geofffrey_telegram_bot"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+python-telegram-bot = "^20.1"
+python-dotenv = "^1.0.0"
+beets = "^2.5.1"
+telethon = "^1.42.0"
+mutagen = "^1.47.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
