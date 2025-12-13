@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  geoffrey-bot:
+    image: localhost/geoffrey-telegram-bot:latest
+    container_name: geoffrey-bot
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    volumes:
+      - ./downloads:/app/downloads
+    environment:
+      - DOWNLOAD_PATH=/app/downloads
+    # Uncomment and adjust the following if you need to expose any ports
+    # ports:
+    #   - "8080:8080"
+    # Add any other environment variables your bot needs here
+    # environment:
+    #   - TELEGRAM_API_KEY=${TELEGRAM_API_KEY}
+    #   - OTHER_VAR=${OTHER_VAR}
