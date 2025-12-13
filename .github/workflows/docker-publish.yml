@@ -8,14 +8,14 @@ name: Docker
 on:
   # Allow manual triggering
   workflow_dispatch:
-  # Trigger on push to master
+  # Trigger on push to main
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
     # Publish semver tags as releases
     tags: [ 'v*.*.*' ]
-  # Trigger on pull requests to master
+  # Trigger on pull requests to main
   pull_request:
-    branches: [ "master" ]
+    branches: [ "main" ]
 
 env:
   # Use docker.io for Docker Hub if empty
