@@ -1,4 +1,4 @@
-# Geoffrey Bot
+# Geoffrey Bot [![Docker Image Version (latest by date)](https://img.shields.io/docker/v/toodaniels/geoffrey_telegram?label=ghcr.io/toodaniels/geoffrey_telegram&sort=date)](https://github.com/toodaniels/geoffrey_telegram/pkgs/container/geoffrey_telegram)
 
 A Telegram bot for downloading and managing media files.
 
@@ -34,6 +34,33 @@ A Telegram bot for downloading and managing media files.
    ```bash
    pip install -r requirements.txt
    ```
+
+## 🐳 Docker Usage
+
+You can run Geoffrey Bot using the pre-built Docker image from GitHub Container Registry:
+
+```bash
+docker run -d \
+  --name geoffrey-bot \
+  -e API_ID=your_api_id \
+  -e API_HASH=your_api_hash \
+  -e TELEGRAM_BOT_TOKEN=your_bot_token \
+  -e ALLOWED_USERS=your_telegram_id \
+  -v /path/to/downloads:/app/downloads \
+  ghcr.io/toodaniels/geoffrey_telegram:main
+```
+
+### Environment Variables
+
+- `API_ID`: Your Telegram API ID
+- `API_HASH`: Your Telegram API hash
+- `TELEGRAM_BOT_TOKEN`: Your Telegram bot token
+- `ALLOWED_USERS`: Comma-separated list of Telegram user IDs that are allowed to use the bot
+- `DOWNLOAD_PATH`: (Optional) Path to store downloaded files (default: `/app/downloads`)
+
+### Volumes
+
+- `/app/downloads`: Directory where downloaded files will be stored
 
 ## Configuration
 
