@@ -13,7 +13,6 @@ python-dotenv = "^1.0.0"
 beets = "^2.5.1"
 telethon = "^1.42.0"
 mutagen = "^1.47.0"
-guessit = "^3.8.0"
 
 [build-system]
 requires = ["poetry-core"]
