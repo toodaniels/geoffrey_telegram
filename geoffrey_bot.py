@@ -407,7 +407,7 @@ async def main():
             # Check file type
             file_type = get_file_type(filename)
             if not file_type:
-                await event.reply("❌ Tipo de archivo no soportado. Solo se permiten videos, audios y documentos.")
+                await event.reply(f"❌ Tipo de archivo no soportado {attr_filename}. Solo se permiten videos, audios y documentos.")
                 return
 
             # Create download directory if it doesn't exist
