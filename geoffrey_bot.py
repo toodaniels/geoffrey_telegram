@@ -432,7 +432,7 @@ async def main():
             file_type = get_file_type(attr_filename)
             
             if not file_type:
-                await event.reply("❌ Tipo de archivo no soportado. Solo se permiten videos, audios y documentos.")
+                await event.reply(f"❌ Tipo de archivo no soportado {attr_filename}. Solo se permiten videos, audios y documentos.")
                 return
 
             filename = attr_filename
