@@ -3,6 +3,7 @@ import re
 import sys 
 import asyncio
 import logging
+from guessit import guessit
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -163,19 +164,19 @@ def get_mp3_metadata(file_path):
 async def show_help(event):
     """Show available commands and their descriptions."""
     help_text = """
-🤖 *Comandos disponibles:*
+    🤖 *Comandos disponibles:*
 
-📥 *Descargar archivos:*
-- Simplemente envía cualquier archivo (video, música o documento) para descargarlo.
+    📥 *Descargar archivos:*
+    - Simplemente envía cualquier archivo (video, música o documento) para descargarlo.
 
-📂 *Listar archivos:*
-`/listar video` o `/list video` - Muestra archivos de video
-`/listar music` o `/list music` - Muestra archivos de música
-`/listar document` o `/list document` - Muestra documentos
+    📂 *Listar archivos:*
+    `/listar video` o `/list video` - Muestra archivos de video
+    `/listar music` o `/list music` - Muestra archivos de música
+    `/listar document` o `/list document` - Muestra documentos
 
-❓ *Ayuda:*
-`/help` o `/ayuda` - Muestra este mensaje de ayuda
-"""
+    ❓ *Ayuda:*
+    `/help` o `/ayuda` - Muestra este mensaje de ayuda
+    """
     await event.reply(help_text, parse_mode='markdown')
 
 
@@ -258,6 +259,15 @@ async def list_files_by_type(event, file_type):
         await event.reply(f"❌ Error al listar archivos: {str(e)}")
         print(f"Error listing files: {str(e)}")
 
+def guess_filename(filename):
+    """Guess file information using guessit."""
+    try:
+        import guessit
+        info = guessit.guessit(filename)
+        return info
+    except ImportError:
+        return None
+
 async def download_worker():
     """Worker that processes download tasks from the queue."""
     while True:
@@ -302,6 +312,7 @@ async def download_worker():
                     
                     # Update message when download is complete
                     file_size = os.path.getsize(task.download_path)
+                    
                     completion_msg = await task.msg.reply(
                         "✅ **Descarga completada**\n"
                         f"📁 `{task.filename}`\n"
@@ -353,6 +364,21 @@ async def download_worker():
             # Small delay to prevent rate limiting
             await asyncio.sleep(1)
 
+def guess_filename(filename):
+    """Guess file information using guessit."""
+    try:
+        import guessit
+        info = guessit.guessit(filename)
+
+        return f"{info['title']} - S{info['season']}E{info['episode']}.{info['container']}"
+    except ImportError:
+        print("guessit not installed")
+        return None
+
+def clean_string(s):
+    """Clean string for filename usage."""
+    return s.strip().replace('/', '_').replace('\\', '_').replace('\n', '_').replace('\r', '_').replace(':', '_')
+
 async def main():
     # Start download workers
     num_workers = 2  # You can increase this for parallel downloads
@@ -373,7 +399,7 @@ async def main():
             return
         
         # Handle list command
-        if message_text.lower().startswith(('/listar', '/list')):
+        if message_text.lower().startswith(('/listar', '/list', '/l')):
             parts = message_text.split(maxsplit=1)
             if len(parts) > 1:
                 await list_files_by_type(event, parts[1].strip())
@@ -393,22 +419,33 @@ async def main():
         print("📥 Nuevo mensaje en Geoffrey:", message_text)
 
         if isinstance(event.message.media, MessageMediaDocument):
-            filename = event.message.text or "untitled"
+            attr_filename = ''
+            filename = ''
             
             for attr in event.message.media.document.attributes:
                 if isinstance(attr, DocumentAttributeFilename):
-                    filename = attr.file_name
-                    print(f'Original filename: {filename}')
+                    attr_filename = attr.file_name
+                    print(f'Original filename: {attr_filename}')
                     break
 
-            # Clean filename
-            filename = filename.strip().replace('/', '_').replace('\\', '_')
-            
             # Check file type
-            file_type = get_file_type(filename)
+            file_type = get_file_type(attr_filename)
+            
             if not file_type:
                 await event.reply(f"❌ Tipo de archivo no soportado {attr_filename}. Solo se permiten videos, audios y documentos.")
                 return
+
+            filename = attr_filename
+
+            if file_type == "Video":
+                # Replace name whether the file is a Video
+                filename = f"{message_text} - {attr_filename}" if message_text else attr_filename
+                filename = guess_filename(clean_string(filename))
+            
+            # Clean filename    
+            filename = clean_string(filename)
+
+            print("Final Filename", filename)
 
             # Create download directory if it doesn't exist
             download_dir = f'{DOWNLOAD_PATH}/{file_type}'
@@ -417,7 +454,7 @@ async def main():
 
             # Check if file already exists
             if check_filename_exists(download_path):
-                await event.reply("❌ El archivo ya existe en el servidor. Por favor, cambia el nombre del archivo e intenta de nuevo.")
+                await event.reply(f"❌ El archivo {filename} ya existe en el servidor. Por favor, cambia el nombre del archivo e intenta de nuevo.")
                 return
 
             # Create download task and add to queue
