@@ -115,17 +115,16 @@ async def download_progress(msg_reply, downloading_txt, received_bytes, total):
         download_progress.last_percent.pop(msg_id, None)
         
 
-def get_file_type(filename):
-    extension = filename.split('.')[-1].lower()
-    video_extensions = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv']
-    audio_extensions = ['mp3', 'wav', 'aac', 'flac', 'ogg']
-    document_extensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt']
+def get_file_type(mime_type):
+    video_mime_types = ['video/mp4', 'video/x-msvideo', 'video/quicktime']
+    audio_mime_types = ['audio/mpeg', 'audio/vnd.wav', 'audio/x-flac']
+    document_mime_types = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation']
 
-    if extension in video_extensions:
+    if mime_type in video_mime_types:
         return 'Video'
-    elif extension in audio_extensions:
+    elif mime_type in audio_mime_types:
         return 'Music'
-    elif extension in document_extensions:
+    elif mime_type in document_mime_types:
         return 'Documents'
     else:
         return None
@@ -429,10 +428,10 @@ async def main():
                     break
 
             # Check file type
-            file_type = get_file_type(attr_filename)
+            file_type = get_file_type(event.message.media.document.mime_type)
             
             if not file_type:
-                await event.reply(f"❌ Tipo de archivo no soportado {attr_filename}. Solo se permiten videos, audios y documentos.")
+                await event.reply(f"❌ Tipo de archivo no soportado {file_type}. Solo se permiten videos, audios y documentos.")
                 return
 
             filename = attr_filename
