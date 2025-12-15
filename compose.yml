@@ -1,0 +1,9 @@
+services:
+  geoffrey-bot:
+    container_name: geoffrey-bot
+    build: .  # Esto le dice que compile la carpeta actual
+    env_file:
+      - .env
+    volumes:
+      - ./downloads:/app/downloads
+    restart: always
