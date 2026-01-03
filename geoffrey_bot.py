@@ -369,7 +369,7 @@ def guess_filename(filename):
         import guessit
         info = guessit.guessit(filename)
 
-        return f"{info['title']} - S{info['season']}E{info['episode']}.{info['container']}"
+        return f"{info.get('title')} - S{info.get('season')}E{info.get('episode')}.{info.get('container')}"
     except ImportError:
         print("guessit not installed")
         return None
