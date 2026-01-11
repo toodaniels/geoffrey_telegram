@@ -371,12 +371,12 @@ def guess_filename(filename):
 
         extension = info.get('container') if info.get('container') is not None else filename.split(".")[-1]
 
-        espisode = f'E{info.get('episode')}' if info.get('episode') is not None else ''
+        espisode = f"E{info.get('episode')}" if info.get('episode') is not None else ""
 
         season = ''
 
         if info.get('episode') is not None:
-            season = f'S{info.get('season')}' if info.get('season') is not None else 'S0'
+            season = f"S{info.get('season')}" if info.get('season') is not None else 'S0'
 
         return f"{info.get('title')} - {season}{episode}.{extension}"
     except ImportError:
