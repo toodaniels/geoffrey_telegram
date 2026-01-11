@@ -117,7 +117,7 @@ async def download_progress(msg_reply, downloading_txt, received_bytes, total):
 
 def get_file_type(mime_type):
     print(f"File type {mime_type}")
-    video_mime_types = ['video/mp4', 'video/x-msvideo', 'video/quicktime']
+    video_mime_types = ['video/mp4', 'video/x-msvideo', 'video/quicktime', 'video/x-matroska']
     audio_mime_types = ['audio/mpeg', 'audio/vnd.wav', 'audio/x-flac']
     document_mime_types = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation']
 
