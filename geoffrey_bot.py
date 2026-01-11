@@ -1,4 +1,4 @@
-import os
+wimport os
 import re
 import sys 
 import asyncio
@@ -369,7 +369,16 @@ def guess_filename(filename):
         import guessit
         info = guessit.guessit(filename)
 
-        return f"{info.get('title')} - S{info.get('season')}E{info.get('episode')}.{info.get('container')}"
+        extension = info.get('container') if info.get('container') is not None else filename.split(".")[-1]
+
+        espisode = f'E{info.get('episode')}' if info.get('episode') is not None else ''
+
+        season = ''
+
+        if info.get('episode') is not None:
+            season = f'S{info.get('season')}' if info.get('season') is not None else 'S0'
+
+        return f"{info.get('title')} - {season}{episode}.{extension}"
     except ImportError:
         print("guessit not installed")
         return None
