@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 DOWNLOAD_PATH = os.getenv("DOWNLOAD_PATH", "./downloads")
-SERIES_BASE = os.getenv("SOURCE_BASE_SERIES", os.path.join(DOWNLOAD_PATH, "Series"))
-MOVIES_BASE = os.getenv("SOURCE_BASE_MOVIES", os.path.join(DOWNLOAD_PATH, "Movies"))
+SERIES_BASE = os.getenv("JELLYFIN_SERIES_PATH", "/mnt/avivo/Series")
+MOVIES_BASE = os.getenv("JELLYFIN_MOVIES_PATH", "/mnt/avivo/Movies")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -79,6 +79,13 @@ def parse_episode_info(filename):
         series = clean_series_name(m.group(1))
         if series:
             return series, 1, int(m.group(2)), ext
+
+    # Patrón 4: "Nombre 01×01 - basura" o "Nombre 1x01 - basura" (temporada×episodio)
+    m = re.search(r"(.+?)\s+(\d+)[×xX](\d+)\s*-", root)
+    if m:
+        series = clean_series_name(m.group(1))
+        if series:
+            return series, int(m.group(2)), int(m.group(3)), ext
 
     return None
 
