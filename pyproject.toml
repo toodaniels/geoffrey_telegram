@@ -7,14 +7,20 @@ readme = "README.md"
 packages = [{include = "geofffrey_telegram_bot"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-python-telegram-bot = "^20.1"
+python = "^3.11"
+python-telegram-bot = "^21.1"
 python-dotenv = "^1.0.0"
 beets = "^2.5.1"
 telethon = "^1.42.0"
 mutagen = "^1.47.0"
 tvnamer = "^3.0.4"
 guessit = "^3.8.0"
+browser-use = "^0.12.6"
+playwright = "^1.59.0"
+langchain-google-genai = "^4.2.2"
+fastapi = "^0.136.1"
+sqlmodel = "^0.0.38"
+uvicorn = "^0.47.0"
 
 [build-system]
 requires = ["poetry-core"]
