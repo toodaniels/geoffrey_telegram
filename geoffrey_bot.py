@@ -12,7 +12,7 @@ import aiohttp
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaDocument, DocumentAttributeFilename
 
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000')
 
 # Download queue and worker setup
 download_queue = asyncio.Queue()
@@ -263,7 +263,7 @@ async def download_worker(http_session: aiohttp.ClientSession):
                 except Exception as e:
                     print(f"Error registering task in API: {str(e)}")
                 
-                # Create initial progress message in Telegram
+                # Create initial progress message in Telegram (best-effort)
                 queue_size = download_queue.qsize()
                 downloading_txt = (
                     f"⬇️ **En cola: {queue_size}**\n"
@@ -273,7 +273,11 @@ async def download_worker(http_session: aiohttp.ClientSession):
                 
                 try:
                     task.msg = await task.event.reply(downloading_txt)
-                    
+                except Exception as e_reply:
+                    logging.warning(f"Could not send Telegram reply (FloodWait?): {e_reply}")
+                    task.msg = None
+
+                try:
                     # Set up the throttled progress callback
                     last_update_info = {"last_update": 0}
                     task.progress_callback = partial(
