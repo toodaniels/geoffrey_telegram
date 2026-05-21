@@ -8,8 +8,11 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 from functools import partial
+import aiohttp
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaDocument, DocumentAttributeFilename
+
+API_BASE_URL = "http://localhost:8000"
 
 # Download queue and worker setup
 download_queue = asyncio.Queue()
@@ -26,6 +29,8 @@ class DownloadTask:
     queue_msg: any = None  # Store the queue message
     progress_callback: callable = None
     retry_count: int = 0
+    task_id: Optional[str] = None  # Store the API task UUID
+
 
 if os.getenv('DEVELOPMENT'):
     from dotenv import load_dotenv
@@ -45,90 +50,33 @@ BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 client = TelegramClient(
     'geoffrey', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-def make_progress_bar(progress, total=100, length=20):
-    percent = int(progress / total * 100)
-    filled = int(length * percent / 100)
-    bar = "█" * filled + "░" * (length - filled)
-    return f"{bar} {percent}%"
-
-async def download_progress(msg_reply, downloading_txt, received_bytes, total):
-    # Initialize static variables if they don't exist
-    if not hasattr(download_progress, 'last_update'):
-        download_progress.last_update = {}
-    if not hasattr(download_progress, 'last_percent'):
-        download_progress.last_percent = {}
-    
-    # Use message ID as key to track progress per download
-    msg_id = id(msg_reply)
+async def report_progress(received_bytes, total, task_id, http_session, last_update_info):
+    """
+    Sends throttled download progress updates to the centralized API.
+    Only sends requests if at least 3 seconds have elapsed since the last update,
+    or if the download is complete.
+    """
+    if not task_id:
+        return
     current_time = time.time()
-    current_percent = int((received_bytes / total) * 100) if total > 0 else 0
-    
-    # Only update if:
-    # 1. This is the first update for this message, or
-    # 2. At least 5 seconds have passed since last update, or
-    # 3. The progress has increased by at least 5%, or
-    # 4. The download is complete
-    last_update = download_progress.last_update.get(msg_id, 0)
-    last_percent = download_progress.last_percent.get(msg_id, -1)
-    
-    should_update = (
-        last_percent == -1 or  # First update
-        current_time - last_update >= 5.0 or  # At least 5 seconds since last update
-        current_percent >= last_percent + 5 or  # At least 5% progress
-        received_bytes >= total  # Download complete
-    )
-    
-    if should_update:
-        # Check if we are in a flood wait cooldown for this message
-        if hasattr(download_progress, 'flood_cooldown') and msg_id in download_progress.flood_cooldown:
-            if current_time < download_progress.flood_cooldown[msg_id]:
-                return
-            else:
-                download_progress.flood_cooldown.pop(msg_id)
+    last_update = last_update_info.get("last_update", 0)
+    is_finished = received_bytes >= total
+    progress = float(received_bytes) / total if total > 0 else 0.0
 
-        download_progress.last_update[msg_id] = current_time
-        download_progress.last_percent[msg_id] = current_percent
-        
-        # Generate progress bar
-        bar = make_progress_bar(received_bytes, total)
-        speed = ""
-        
-        # Add speed calculation if we have previous data
-        if hasattr(download_progress, 'last_bytes') and hasattr(download_progress, 'last_time'):
-            time_diff = current_time - download_progress.last_time
-            bytes_diff = received_bytes - download_progress.last_bytes
-            if time_diff > 0 and bytes_diff > 0:
-                speed_mb = (bytes_diff / (1024 * 1024)) / time_diff
-                speed = f"\n⚡ {speed_mb:.1f} MB/s"
-        
+    if current_time - last_update >= 3.0 or is_finished:
+        last_update_info["last_update"] = current_time
+        payload = {
+            "status": "DOWNLOADING",
+            "progress": progress,
+            "downloaded_bytes": received_bytes
+        }
         try:
-            await msg_reply.edit(
-                f"{downloading_txt}\n\n"
-                f"{bar}\n"
-                f"📊 {current_percent}% • {received_bytes/1024/1024:.1f}MB / {total/1024/1024:.1f}MB"
-                f"{speed}"
-            )
+            async with http_session.patch(f"{API_BASE_URL}/tasks/{task_id}", json=payload) as response:
+                if response.status != 200:
+                    logging.error(f"Failed to update progress for task {task_id}. Status: {response.status}")
         except Exception as e:
-            err_str = str(e)
-            if "message not modified" not in err_str.lower():
-                if "A wait of" in err_str:
-                    # If we hit a flood wait, stop updating this message for 30 seconds
-                    if not hasattr(download_progress, 'flood_cooldown'):
-                        download_progress.flood_cooldown = {}
-                    download_progress.flood_cooldown[msg_id] = current_time + 30
-                    print(f"Flood wait detected, silencing progress for 30s: {err_str}")
-                else:
-                    print(f"Error updating progress: {err_str}")
-    
-    # Update speed calculation data
-    download_progress.last_bytes = received_bytes
-    download_progress.last_time = current_time
-    
-    # Clean up progress tracking for completed downloads
-    if received_bytes >= total and msg_id in download_progress.last_update:
-        download_progress.last_update.pop(msg_id, None)
-        download_progress.last_percent.pop(msg_id, None)
-        
+            logging.error(f"Error reporting progress for task {task_id}: {str(e)}")
+
 
 def get_file_type(mime_type):
     print(f"File type {mime_type}")
@@ -283,20 +231,39 @@ def guess_filename(filename):
     except ImportError:
         return None
 
-async def download_worker():
+async def download_worker(http_session: aiohttp.ClientSession):
     """Worker that processes download tasks from the queue."""
     while True:
         task = await download_queue.get()
-        task_id = id(task)
+        local_id = id(task)
         
         try:
             async with download_lock:
-                if task_id in active_downloads:
+                if local_id in active_downloads:
                     return  # Skip if task is already being processed
                     
-                active_downloads[task_id] = task
+                active_downloads[local_id] = task
                 
-                # Create progress message
+                # Register the task in the centralized API before downloading
+                payload = {
+                    "user_id": task.event.sender_id,
+                    "message_id": task.message.id,
+                    "file_name": task.filename,
+                    "file_size_bytes": task.message.file.size if task.message.file else None
+                }
+                
+                try:
+                    async with http_session.post(f"{API_BASE_URL}/tasks", json=payload) as response:
+                        if response.status == 201:
+                            data = await response.json()
+                            task.task_id = data["task_id"]
+                            print(f"Registered task in API. Task UUID: {task.task_id}")
+                        else:
+                            print(f"Failed to register task in API. Status: {response.status}")
+                except Exception as e:
+                    print(f"Error registering task in API: {str(e)}")
+                
+                # Create initial progress message in Telegram
                 queue_size = download_queue.qsize()
                 downloading_txt = (
                     f"⬇️ **En cola: {queue_size}**\n"
@@ -307,11 +274,13 @@ async def download_worker():
                 try:
                     task.msg = await task.event.reply(downloading_txt)
                     
-                    # Download the file with progress callback
+                    # Set up the throttled progress callback
+                    last_update_info = {"last_update": 0}
                     task.progress_callback = partial(
-                        download_progress, 
-                        task.msg, 
-                        downloading_txt
+                        report_progress,
+                        task_id=task.task_id,
+                        http_session=http_session,
+                        last_update_info=last_update_info
                     )
                     
                     # Add timeout to prevent hanging on slow downloads
@@ -327,6 +296,20 @@ async def download_worker():
                     
                     # Update message when download is complete
                     file_size = os.path.getsize(task.download_path)
+                    
+                    # Update API task status to COMPLETED
+                    if task.task_id:
+                        payload = {
+                            "status": "COMPLETED",
+                            "progress": 1.0,
+                            "downloaded_bytes": file_size
+                        }
+                        try:
+                            async with http_session.patch(f"{API_BASE_URL}/tasks/{task.task_id}", json=payload) as response:
+                                if response.status != 200:
+                                    print(f"Failed to mark task completed in API: {response.status}")
+                        except Exception as e_api:
+                            print(f"Error marking task completed in API: {str(e_api)}")
                     
                     completion_msg = await task.msg.reply(
                         "✅ **Descarga completada**\n"
@@ -344,7 +327,6 @@ async def download_worker():
                         print(f"Could not delete progress message: {str(e)}")
                     
                     try:
-                        print(task.queue_msg)
                         if task.queue_msg:
                             await task.queue_msg.delete()
                     except Exception as e:
@@ -357,8 +339,25 @@ async def download_worker():
                         "La descarga tomó demasiado tiempo. Inténtalo de nuevo más tarde."
                     )
                     print(f'\n❌ Download timed out: {task.filename}')
+                    
+                    # Update API task status to FAILED
+                    if task.task_id:
+                        payload = {
+                            "status": "FAILED",
+                            "error_message": "Download timed out"
+                        }
+                        try:
+                            async with http_session.patch(f"{API_BASE_URL}/tasks/{task.task_id}", json=payload) as response:
+                                if response.status != 200:
+                                    print(f"Failed to mark task failed in API: {response.status}")
+                        except Exception as e_api:
+                            print(f"Error marking task failed in API: {str(e_api)}")
+                            
                     if task.msg:
-                        await task.msg.edit(error_msg)
+                        try:
+                            await task.msg.edit(error_msg)
+                        except Exception as edit_err:
+                            print(f"Failed to edit message to timeout: {str(edit_err)}")
                         
                 except Exception as e:
                     error_msg = (
@@ -367,14 +366,31 @@ async def download_worker():
                         f"Error: {str(e)}"
                     )
                     print(f'\n❌ Error downloading {task.filename}: {str(e)}')
+                    
+                    # Update API task status to FAILED
+                    if task.task_id:
+                        payload = {
+                            "status": "FAILED",
+                            "error_message": str(e)
+                        }
+                        try:
+                            async with http_session.patch(f"{API_BASE_URL}/tasks/{task.task_id}", json=payload) as response:
+                                if response.status != 200:
+                                    print(f"Failed to mark task failed in API: {response.status}")
+                        except Exception as e_api:
+                            print(f"Error marking task failed in API: {str(e_api)}")
+                            
                     if task.msg:
-                        await task.msg.edit(error_msg)
+                        try:
+                            await task.msg.edit(error_msg)
+                        except Exception as edit_err:
+                            print(f"Failed to edit message to error: {str(edit_err)}")
                     
         except Exception as e:
             print(f"\n❌ Error in download worker: {str(e)}")
             
         finally:
-            active_downloads.pop(task_id, None)
+            active_downloads.pop(local_id, None)
             download_queue.task_done()
             # Small delay to prevent rate limiting
             await asyncio.sleep(1)
@@ -404,103 +420,104 @@ def clean_string(s):
     return s.strip().replace('/', '_').replace('\\', '_').replace('\n', '_').replace('\r', '_').replace(':', '_')
 
 async def main():
-    # Start download workers
-    num_workers = 2  # You can increase this for parallel downloads
-    workers = [asyncio.create_task(download_worker()) for _ in range(num_workers)]
-    
-    # Handler para mensajes nuevos
-    @client.on(events.NewMessage)
-    async def handler(event):
-        if event.sender_id not in list(map(int, ALLOWED_USERS)):
-            await event.reply("No tienes permisos para usar este bot.")
-            return
-    
-        message_text = (event.message.text or "").strip().lower()
+    async with aiohttp.ClientSession() as http_session:
+        # Start download workers
+        num_workers = 2  # You can increase this for parallel downloads
+        workers = [asyncio.create_task(download_worker(http_session)) for _ in range(num_workers)]
         
-        # Handle help command
-        if message_text in ['/help', '/ayuda', '/start']:
-            await show_help(event)
-            return
+        # Handler para mensajes nuevos
+        @client.on(events.NewMessage)
+        async def handler(event):
+            if event.sender_id not in list(map(int, ALLOWED_USERS)):
+                await event.reply("No tienes permisos para usar este bot.")
+                return
         
-        # Handle list command
-        if message_text.lower().startswith(('/listar', '/list', '/l')):
-            parts = message_text.split(maxsplit=1)
-            if len(parts) > 1:
-                await list_files_by_type(event, parts[1].strip())
-            else:
-                # Show help for list command
-                await event.reply(
-                    "📋 **Lista de archivos disponibles**\n\n"
-                    "Usa uno de estos comandos:\n"
-                    "`/listar video` - Muestra archivos de video\n"
-                    "`/listar music` - Muestra archivos de música\n"
-                    "`/listar document` - Muestra documentos\n\n"
-                    "*Sugerencia:* Usa `/l` en lugar de `/listar` para ahorrar tiempo.\n"
-                    "Ejemplo: `/l video`"
+            message_text = (event.message.text or "").strip().lower()
+            
+            # Handle help command
+            if message_text in ['/help', '/ayuda', '/start']:
+                await show_help(event)
+                return
+            
+            # Handle list command
+            if message_text.lower().startswith(('/listar', '/list', '/l')):
+                parts = message_text.split(maxsplit=1)
+                if len(parts) > 1:
+                    await list_files_by_type(event, parts[1].strip())
+                else:
+                    # Show help for list command
+                    await event.reply(
+                        "📋 **Lista de archivos disponibles**\n\n"
+                        "Usa uno de estos comandos:\n"
+                        "`/listar video` - Muestra archivos de video\n"
+                        "`/listar music` - Muestra archivos de música\n"
+                        "`/listar document` - Muestra documentos\n\n"
+                        "*Sugerencia:* Usa `/l` en lugar de `/listar` para ahorrar tiempo.\n"
+                        "Ejemplo: `/l video`"
+                    )
+                return
+    
+            print("📥 Nuevo mensaje en Geoffrey:", message_text)
+    
+            if isinstance(event.message.media, MessageMediaDocument):
+                attr_filename = ''
+                filename = ''
+                
+                for attr in event.message.media.document.attributes:
+                    if isinstance(attr, DocumentAttributeFilename):
+                        attr_filename = attr.file_name
+                        print(f'Original filename: {attr_filename}')
+                        break
+    
+                # Check file type
+                file_type = get_file_type(event.message.media.document.mime_type)
+                
+                if not file_type:
+                    await event.reply(f"❌ Tipo de archivo no soportado {file_type}. Solo se permiten videos, audios y documentos.")
+                    return
+    
+                filename = attr_filename
+    
+                if file_type == "Video":
+                    # Replace name whether the file is a Video
+                    filename = f"{message_text} - {attr_filename}" if message_text else attr_filename
+                    filename = guess_filename(clean_string(filename))
+                
+                # Clean filename    
+                filename = clean_string(filename)
+    
+                print("Final Filename", filename)
+    
+                # Create download directory if it doesn't exist
+                download_dir = f'{DOWNLOAD_PATH}/{file_type}'
+                os.makedirs(download_dir, exist_ok=True)
+                download_path = f'{download_dir}/{filename}'
+    
+                # Check if file already exists
+                if check_filename_exists(download_path):
+                    await event.reply(f"❌ El archivo {filename} ya existe en el servidor. Por favor, cambia el nombre del archivo e intenta de nuevo.")
+                    return
+    
+                # Create download task and add to queue
+                task = DownloadTask(
+                    message=event.message,
+                    filename=filename,
+                    download_path=download_path,
+                    event=event
                 )
-            return
-
-        print("📥 Nuevo mensaje en Geoffrey:", message_text)
-
-        if isinstance(event.message.media, MessageMediaDocument):
-            attr_filename = ''
-            filename = ''
-            
-            for attr in event.message.media.document.attributes:
-                if isinstance(attr, DocumentAttributeFilename):
-                    attr_filename = attr.file_name
-                    print(f'Original filename: {attr_filename}')
-                    break
-
-            # Check file type
-            file_type = get_file_type(event.message.media.document.mime_type)
-            
-            if not file_type:
-                await event.reply(f"❌ Tipo de archivo no soportado {file_type}. Solo se permiten videos, audios y documentos.")
-                return
-
-            filename = attr_filename
-
-            if file_type == "Video":
-                # Replace name whether the file is a Video
-                filename = f"{message_text} - {attr_filename}" if message_text else attr_filename
-                filename = guess_filename(clean_string(filename))
-            
-            # Clean filename    
-            filename = clean_string(filename)
-
-            print("Final Filename", filename)
-
-            # Create download directory if it doesn't exist
-            download_dir = f'{DOWNLOAD_PATH}/{file_type}'
-            os.makedirs(download_dir, exist_ok=True)
-            download_path = f'{download_dir}/{filename}'
-
-            # Check if file already exists
-            if check_filename_exists(download_path):
-                await event.reply(f"❌ El archivo {filename} ya existe en el servidor. Por favor, cambia el nombre del archivo e intenta de nuevo.")
-                return
-
-            # Create download task and add to queue
-            task = DownloadTask(
-                message=event.message,
-                filename=filename,
-                download_path=download_path,
-                event=event
-            )
-            
-            await download_queue.put(task)
-            queue_size = download_queue.qsize()
-            
-            # Notify user that the download is queued and store the message
-            task.queue_msg = await event.reply(
-                f"📥 **Archivo agregado a la cola**\n"
-                f"📄 `{filename}`\n"
-                f"🔄 Posición en cola: {queue_size}"
-            )
-
-    # Mantener el cliente corriendo
-    await client.run_until_disconnected()
+                
+                await download_queue.put(task)
+                queue_size = download_queue.qsize()
+                
+                # Notify user that the download is queued and store the message
+                task.queue_msg = await event.reply(
+                    f"📥 **Archivo agregado a la cola**\n"
+                    f"📄 `{filename}`\n"
+                    f"🔄 Posición en cola: {queue_size}"
+                )
+    
+        # Mantener el cliente corriendo
+        await client.run_until_disconnected()
 
 with client:
     client.loop.run_until_complete(main())
