@@ -6,6 +6,7 @@ services:
     container_name: syncthing
     network_mode: host
     hostname: omni
+    userns_mode: keep-id
     environment:
       - PUID=1000
       - PGID=1000
@@ -20,7 +21,7 @@ services:
     restart: unless-stopped
 
   geoffrey-bot:
-    image: ghcr.io/toodaniels/geoffrey_telegram:main
+    image: ghcr.io/toodaniels/geoffrey_bot:main
     container_name: geoffrey-bot
     restart: always
     env_file:
