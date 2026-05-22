@@ -6,7 +6,7 @@ from api.models import DownloadStatus
 class DownloadTaskCreate(BaseModel):
     user_id: int
     message_id: int
-    chat_id: int
+    chat_id: Optional[int] = None
     file_name: str
     file_size_bytes: Optional[int] = None
 
