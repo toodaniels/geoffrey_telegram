@@ -244,25 +244,6 @@ async def download_worker(http_session: aiohttp.ClientSession):
                     
                 active_downloads[local_id] = task
                 
-                # Register the task in the centralized API before downloading
-                payload = {
-                    "user_id": task.event.sender_id,
-                    "message_id": task.message.id,
-                    "file_name": task.filename,
-                    "file_size_bytes": task.message.file.size if task.message.file else None
-                }
-                
-                try:
-                    async with http_session.post(f"{API_BASE_URL}/tasks", json=payload) as response:
-                        if response.status == 201:
-                            data = await response.json()
-                            task.task_id = data["task_id"]
-                            print(f"Registered task in API. Task UUID: {task.task_id}")
-                        else:
-                            print(f"Failed to register task in API. Status: {response.status}")
-                except Exception as e:
-                    print(f"Error registering task in API: {str(e)}")
-                
                 # Create initial progress message in Telegram (best-effort)
                 queue_size = download_queue.qsize()
                 downloading_txt = (
@@ -271,11 +252,12 @@ async def download_worker(http_session: aiohttp.ClientSession):
                     f"💾 Tamaño: {task.message.file.size/1024/1024:.1f}MB"
                 )
                 
-                try:
-                    task.msg = await task.event.reply(downloading_txt)
-                except Exception as e_reply:
-                    logging.warning(f"Could not send Telegram reply (FloodWait?): {e_reply}")
-                    task.msg = None
+                if task.event:
+                    try:
+                        task.msg = await task.event.reply(downloading_txt)
+                    except Exception as e_reply:
+                        logging.warning(f"Could not send Telegram reply (FloodWait?): {e_reply}")
+                        task.msg = None
 
                 try:
                     # Set up the throttled progress callback
@@ -315,12 +297,13 @@ async def download_worker(http_session: aiohttp.ClientSession):
                         except Exception as e_api:
                             print(f"Error marking task completed in API: {str(e_api)}")
                     
-                    completion_msg = await task.msg.reply(
-                        "✅ **Descarga completada**\n"
-                        f"📁 `{task.filename}`\n"
-                        f"💾 Tamaño: {file_size/1024/1024:.1f}MB\n"
-                        f"📂 Guardado en: `{task.download_path}`"
-                    )
+                    if task.msg:
+                        await task.msg.reply(
+                            "✅ **Descarga completada**\n"
+                            f"📁 `{task.filename}`\n"
+                            f"💾 Tamaño: {file_size/1024/1024:.1f}MB\n"
+                            f"📂 Guardado en: `{task.download_path}`"
+                        )
                     print(f'\n✅ Downloaded to {task.download_path}')
                     
                     # Delete the progress and queue messages after a short delay
@@ -423,10 +406,56 @@ def clean_string(s):
     """Clean string for filename usage."""
     return s.strip().replace('/', '_').replace('\\', '_').replace('\n', '_').replace('\r', '_').replace(':', '_')
 
+async def reconcile_tasks(http_session: aiohttp.ClientSession):
+    """
+    Called at startup. Resets orphaned DOWNLOADING/UPLOADING tasks to PENDING,
+    and re-queues any PENDING tasks left from a previous session.
+    """
+    logging.info("Reconciling orphaned tasks…")
+    try:
+        async with http_session.post(f"{API_BASE_URL}/tasks/reconcile") as response:
+            if response.status == 200:
+                tasks = await response.json()
+                logging.info("Reconciled %d tasks", len(tasks))
+                for api_task in tasks:
+                    if api_task["status"] != "PENDING":
+                        continue
+                    try:
+                        chat = await client.get_entity(api_task["chat_id"])
+                        message = await client.get_messages(chat, ids=api_task["message_id"])
+                        if not message:
+                            logging.warning("Message %s not found, skipping", api_task["message_id"])
+                            continue
+                        file_type = "Video"
+                        download_dir = f'{DOWNLOAD_PATH}/{file_type}'
+                        os.makedirs(download_dir, exist_ok=True)
+                        download_path = f'{download_dir}/{api_task["file_name"]}'
+                        task = DownloadTask(
+                            message=message,
+                            filename=api_task["file_name"],
+                            download_path=download_path,
+                            event=None,
+                            msg=None,
+                            queue_msg=None,
+                            task_id=api_task["task_id"],
+                        )
+                        await download_queue.put(task)
+                        logging.info("Re-queued task %s: %s", api_task["task_id"], api_task["file_name"])
+                    except Exception as e:
+                        logging.error("Failed to re-queue task %s: %s", api_task["task_id"], e)
+            else:
+                logging.error("Reconcile API returned %s", response.status)
+    except Exception as e:
+        logging.error("Reconcile error: %s", e)
+
+
 async def main():
     async with aiohttp.ClientSession() as http_session:
+        # Reconcile orphaned tasks before starting workers
+        await reconcile_tasks(http_session)
+
         # Start download workers
-        num_workers = 2  # You can increase this for parallel downloads
+        num_workers = 2
         workers = [asyncio.create_task(download_worker(http_session)) for _ in range(num_workers)]
         
         # Handler para mensajes nuevos
@@ -509,6 +538,25 @@ async def main():
                     download_path=download_path,
                     event=event
                 )
+                
+                # Register task in the API immediately (before worker picks it up)
+                try:
+                    api_payload = {
+                        "user_id": event.sender_id,
+                        "message_id": event.message.id,
+                        "chat_id": event.chat_id,
+                        "file_name": filename,
+                        "file_size_bytes": event.message.file.size if event.message.file else None
+                    }
+                    async with http_session.post(f"{API_BASE_URL}/tasks", json=api_payload) as response:
+                        if response.status == 201:
+                            data = await response.json()
+                            task.task_id = data["task_id"]
+                            logging.info(f"Registered queued task in API. Task UUID: {task.task_id}")
+                        else:
+                            logging.error(f"Failed to register queued task in API: {response.status}")
+                except Exception as e:
+                    logging.error(f"Error registering queued task in API: {str(e)}")
                 
                 await download_queue.put(task)
                 queue_size = download_queue.qsize()
