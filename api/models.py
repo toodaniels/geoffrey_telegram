@@ -23,12 +23,14 @@ class DownloadTask(SQLModel, table=True):
     )
     user_id: int = Field(index=True)
     message_id: int
+    chat_id: int = Field(default=0, index=True)
     file_name: str
     file_size_bytes: Optional[int] = Field(default=None, nullable=True)
     status: DownloadStatus = Field(default=DownloadStatus.PENDING)
     progress: float = Field(default=0.0)
     downloaded_bytes: int = Field(default=0)
     error_message: Optional[str] = Field(default=None, nullable=True)
+    retry_count: int = Field(default=0)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         nullable=False

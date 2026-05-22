@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geoffrey Downloads</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+    .container { max-width: 800px; margin: 0 auto; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 2rem; padding-bottom: 1rem;
+      border-bottom: 1px solid #21262d;
+    }
+    h1 { font-size: 1.5rem; font-weight: 600; }
+    #status-badge {
+      font-size: 0.75rem; padding: 0.25rem 0.75rem;
+      border-radius: 9999px; background: #21262d; color: #8b949e;
+    }
+    #status-badge.connected { background: #1f6f31; color: #7ee787; }
+    #status-badge.disconnected { background: #21262d; color: #8b949e; }
+    #status-badge.error { background: #792e2e; color: #ff7b72; }
+
+    .empty-state {
+      text-align: center; padding: 3rem 1rem; color: #484f58;
+    }
+    .empty-state p { font-size: 1.1rem; }
+
+    .task-card {
+      background: #161b22; border: 1px solid #21262d;
+      border-radius: 8px; padding: 1rem 1.25rem;
+      margin-bottom: 0.75rem; transition: border-color 0.2s;
+    }
+    .task-card:hover { border-color: #30363d; }
+
+    .task-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 0.5rem; gap: 1rem;
+    }
+    .task-name {
+      font-size: 0.9rem; font-weight: 500; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+    }
+    .task-status {
+      font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+      padding: 0.15rem 0.5rem; border-radius: 4px; white-space: nowrap;
+    }
+    .status-PENDING    { background: #21262d; color: #8b949e; }
+    .status-DOWNLOADING { background: #1f6f3133; color: #7ee787; }
+    .status-UPLOADING   { background: #1f6f3133; color: #7ee787; }
+    .status-COMPLETED   { background: #1f6f31; color: #7ee787; }
+    .status-FAILED      { background: #792e2e; color: #ff7b72; }
+    .status-CANCELLED   { background: #21262d; color: #484f58; }
+
+    .progress-bar-track {
+      width: 100%; height: 6px; background: #21262d; border-radius: 9999px;
+      overflow: hidden; margin-bottom: 0.4rem;
+    }
+    .progress-bar-fill {
+      height: 100%; width: 0%; background: #58a6ff;
+      border-radius: 9999px; transition: width 0.4s ease-in-out;
+    }
+    .progress-bar-fill.completed { background: #3fb950; }
+    .progress-bar-fill.failed { background: #f85149; }
+
+    .task-meta {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.75rem; color: #484f58;
+    }
+    .task-meta .bytes { font-variant-numeric: tabular-nums; }
+
+    .connection-toast {
+      position: fixed; bottom: 1.5rem; right: 1.5rem;
+      background: #21262d; color: #c9d1d9; padding: 0.6rem 1rem;
+      border-radius: 8px; font-size: 0.8rem; opacity: 0;
+      transition: opacity 0.3s; pointer-events: none;
+    }
+    .connection-toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Geoffrey Downloads</h1>
+      <span id="status-badge" class="disconnected">Disconnected</span>
+    </header>
+    <div id="task-list"></div>
+  </div>
+  <div id="toast" class="connection-toast"></div>
+
+  <script>
+    const taskList = document.getElementById('task-list');
+    const badge = document.getElementById('status-badge');
+    const toast = document.getElementById('toast');
+
+    function fmtBytes(bytes) {
+      if (bytes == null) return '';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let i = 0; let v = bytes;
+      while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+      return v.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+    }
+
+    function fmtPct(pct) {
+      return (pct * 100).toFixed(1) + '%';
+    }
+
+    function statusClass(status) {
+      return 'status-' + (status || 'PENDING');
+    }
+
+    function fillClass(status) {
+      if (status === 'COMPLETED') return 'completed';
+      if (status === 'FAILED' || status === 'CANCELLED') return 'failed';
+      return '';
+    }
+
+    function cardId(taskId) {
+      return 'task-' + taskId;
+    }
+
+    function renderTask(task) {
+      const id = cardId(task.task_id);
+      const exists = document.getElementById(id);
+      const pct = task.progress || 0;
+      const pctText = task.status === 'COMPLETED' ? '100%' : fmtPct(pct);
+      const bytesText = task.downloaded_bytes != null
+        ? fmtBytes(task.downloaded_bytes) + (task.file_size_bytes ? ' / ' + fmtBytes(task.file_size_bytes) : '')
+        : '';
+
+      const html =
+        `<div class="task-header">
+          <span class="task-name" title="${escapeHtml(task.file_name)}">${escapeHtml(task.file_name)}</span>
+          <span class="task-status ${statusClass(task.status)}">${task.status}</span>
+        </div>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill ${fillClass(task.status)}" style="width: ${pct * 100}%"></div>
+        </div>
+        <div class="task-meta">
+          <span class="bytes">${bytesText}</span>
+          <span>${pctText}</span>
+        </div>`;
+
+      if (exists) {
+        exists.innerHTML = html;
+      } else {
+        const card = document.createElement('div');
+        card.id = id;
+        card.className = 'task-card';
+        card.innerHTML = html;
+        taskList.appendChild(card);
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      clearTimeout(toast._hide);
+      toast._hide = setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    function setConnected(ok) {
+      badge.textContent = ok ? 'Connected' : 'Disconnected';
+      badge.className = ok ? 'connected' : 'disconnected';
+    }
+
+    const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'CANCELLED'];
+
+    function fetchActiveTasks() {
+      fetch('/tasks/active')
+        .then(r => r.json())
+        .then(tasks => {
+          taskList.innerHTML = '';
+          if (tasks.length === 0) {
+            taskList.innerHTML = '<div class="empty-state"><p>No active downloads</p></div>';
+            return;
+          }
+          tasks.forEach(renderTask);
+        })
+        .catch(() => {
+          taskList.innerHTML = '<div class="empty-state"><p>Could not load tasks</p></div>';
+        });
+    }
+
+    // --- Fetch active tasks on load ---
+    fetchActiveTasks();
+
+    // --- WebSocket connection ---
+    let ws = null;
+    let reconnectTimer = null;
+
+    function connectWS() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      const url = protocol + '://' + location.host + '/ws';
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        setConnected(true);
+        showToast('Connected');
+        fetchActiveTasks();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (TERMINAL_STATUSES.includes(data.status)) {
+            fetchActiveTasks();
+          } else {
+            const empty = taskList.querySelector('.empty-state');
+            if (empty) empty.remove();
+            renderTask(data);
+          }
+        } catch (e) {
+          console.warn('WS parse error', e);
+        }
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        showToast('Disconnected – reconnecting…');
+        scheduleReconnect();
+      };
+
+      ws.onerror = () => {
+        badge.className = 'error';
+        badge.textContent = 'Error';
+      };
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        connectWS();
+      }, 3000);
+    }
+
+    connectWS();
+  </script>
+</body>
+</html>
