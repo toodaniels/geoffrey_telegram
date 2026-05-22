@@ -1,4 +1,4 @@
-# Geoffrey Bot [![Docker Image Version (latest by date)](https://img.shields.io/docker/v/toodaniels/geoffrey_telegram?label=ghcr.io/toodaniels/geoffrey_telegram&sort=date)](https://github.com/toodaniels/geoffrey_telegram/pkgs/container/geoffrey_telegram)
+# Geoffrey Bot [![Docker Image Version (latest by date)](https://img.shields.io/docker/v/toodaniels/geoffrey_bot?label=ghcr.io/toodaniels/geoffrey_bot&sort=date)](https://github.com/toodaniels/geoffrey_bot/pkgs/container/geoffrey_bot)
 
 A Telegram bot for downloading and managing media files.
 
@@ -47,7 +47,7 @@ docker run -d \
   -e TELEGRAM_BOT_TOKEN=your_bot_token \
   -e ALLOWED_USERS=your_telegram_id \
   -v /path/to/downloads:/app/downloads \
-  ghcr.io/toodaniels/geoffrey_telegram:main
+  ghcr.io/toodaniels/geoffrey_bot:main
 ```
 
 ### Environment Variables
