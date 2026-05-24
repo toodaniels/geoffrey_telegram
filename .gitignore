@@ -134,3 +134,8 @@ downloaded/
 sync/
 homeassistant/
 netalertx/
+
+# SQLite Databases
+*.db
+
+.antigravitycli/

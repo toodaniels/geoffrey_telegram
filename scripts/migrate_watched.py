@@ -54,10 +54,7 @@ def migrate_items(dry_run=True):
         if not source_path or is_downloading(source_path):
             continue
             
-        # Only migrate from the Video folder
-        if "Video" not in source_path:
-            continue
-            
+        # Remove the strict "Video" folder check
         source_path = translate_path(source_path)
         is_movie = item.get("Type") == "Movie"
         
