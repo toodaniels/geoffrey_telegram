@@ -50,9 +50,10 @@ BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 client = TelegramClient(
     'geoffrey', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-async def report_progress(received_bytes, total, task_id, http_session, last_update_info):
+async def report_progress(received_bytes, total, task_id, http_session, last_update_info, filename, last_terminal_info):
     """
-    Sends throttled download progress updates to the centralized API.
+    Sends throttled download progress updates to the centralized API
+    and prints a progress bar to the terminal.
     Only sends requests if at least 3 seconds have elapsed since the last update,
     or if the download is complete.
     """
@@ -76,6 +77,18 @@ async def report_progress(received_bytes, total, task_id, http_session, last_upd
                     logging.error(f"Failed to update progress for task {task_id}. Status: {response.status}")
         except Exception as e:
             logging.error(f"Error reporting progress for task {task_id}: {str(e)}")
+
+        last_terminal = last_terminal_info.get("last_update", 0)
+        if current_time - last_terminal >= 3.0 or is_finished:
+            last_terminal_info["last_update"] = current_time
+            bar_length = 30
+            filled = int(round(progress * bar_length))
+            bar = '█' * filled + '░' * (bar_length - filled)
+            percent = progress * 100
+            sys.stdout.write(f"\r\033[K⬇️ {bar} {percent:5.1f}% - {filename}")
+            sys.stdout.flush()
+            if is_finished:
+                print()
 
 
 def get_file_type(mime_type):
@@ -262,11 +275,14 @@ async def download_worker(http_session: aiohttp.ClientSession):
                 try:
                     # Set up the throttled progress callback
                     last_update_info = {"last_update": 0}
+                    last_terminal_info = {"last_update": 0}
                     task.progress_callback = partial(
                         report_progress,
                         task_id=task.task_id,
                         http_session=http_session,
-                        last_update_info=last_update_info
+                        last_update_info=last_update_info,
+                        filename=task.filename,
+                        last_terminal_info=last_terminal_info
                     )
                     
                     # Add timeout to prevent hanging on slow downloads
